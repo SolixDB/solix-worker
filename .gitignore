@@ -1,0 +1,5 @@
+node_modules
+# Secret
+.env
+# Builds
+dist

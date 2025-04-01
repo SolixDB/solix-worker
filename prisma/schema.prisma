@@ -1,0 +1,111 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Provider {
+  GOOGLE
+  GITHUB
+}
+
+enum IndexType {
+  TRANSACTIONS
+  TOKEN_ACCOUNTS
+  PROGRAM_LOGS
+  NFTS
+}
+
+enum Status {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
+enum IndexParams {
+  TRANSFER
+  DEPOSIT
+  WITHDRAW
+  NFT_SALE
+  NFT_MINT
+  SWAP
+  TOKEN_MINT
+  LOAN
+  STAKE_TOKEN
+  BURN
+}
+
+enum Plan {
+  FREE
+  PRO
+}
+
+model User {
+  id            String          @id @default(uuid())
+  name          String?
+  email         String          @unique
+  image         String?
+  credits       Int             @default(500)
+  plan          Plan            @default(FREE)
+  createdAt     DateTime        @default(now())
+  accounts      Account[]
+  databases     Database[]
+  indexSettings IndexSettings[]
+}
+
+model Account {
+  id                String   @id @default(uuid())
+  provider          Provider
+  providerAccountId String?
+  accessToken       String?
+  refreshToken      String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now()) @updatedAt
+  userId            String?
+  user              User?    @relation(fields: [userId], references: [id])
+
+  @@unique([provider, providerAccountId])
+}
+
+model Database {
+  id            String          @id @default(uuid())
+  name          String
+  host          String
+  port          Int             @default(5432)
+  username      String
+  password      String
+  dbName        String
+  createdAt     DateTime        @default(now())
+  userId        String
+  user          User            @relation(fields: [userId], references: [id])
+  indexSettings IndexSettings[]
+
+  @@unique([name, userId])
+}
+
+model IndexSettings {
+  id            String        @id @default(uuid())
+  targetAddr    String
+  indexType     IndexType
+  indexParams   IndexParams[]
+  status        Status
+  webhookSecret String        @default("")
+  updatedAt     DateTime      @default(now()) @updatedAt
+  createdAt     DateTime      @default(now())
+  userId        String
+  user          User          @relation(fields: [userId], references: [id])
+  databaseId    String
+  database      Database      @relation(fields: [databaseId], references: [id])
+
+  @@index([targetAddr])
+}
+
+model Params {
+  id               Int           @id @default(autoincrement())
+  accountAddresses String[]
+  transactionTypes IndexParams[]
+}

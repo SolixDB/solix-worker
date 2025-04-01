@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "postinstall": "prisma generate",
+    "postinstall": "prisma generate && pnpm run build",
     "dev": "concurrently \"tsc -w\" \"nodemon -q dist/index.js\"",
     "start": "node dist/index.js",
     "build": "tsc"
@@ -14,6 +14,7 @@
   "license": "ISC",
   "packageManager": "pnpm@10.5.1",
   "devDependencies": {
+    "@types/express": "^5.0.1",
     "@types/node": "^22.13.15",
     "@types/sodium-native": "^2.3.9",
     "concurrently": "^9.1.2",
@@ -27,6 +28,7 @@
     "@upstash/redis": "^1.34.6",
     "bull": "^4.16.5",
     "dotenv": "^16.4.7",
+    "express": "^5.1.0",
     "sodium-native": "^5.0.0"
   }
 }

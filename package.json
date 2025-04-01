@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "postinstall": "prisma generate",
+    "postinstall": "prisma generate && pnpm run build",
     "dev": "concurrently \"tsc -w\" \"nodemon -q dist/index.js\"",
     "start": "node dist/index.js",
     "build": "tsc"

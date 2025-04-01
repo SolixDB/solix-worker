@@ -4,6 +4,11 @@ import { getCachedData } from "../lib/cacheData";
 import { Database, PrismaClient, User } from "@prisma/client";
 import { decrypt } from "../lib/encrypt";
 
+const HELIUS_MAINNET_API = "https://api.helius.xyz/v0/webhooks";
+const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+const WEBHOOK_ID = process.env.WEBHOOK_ID;
+
 export default async function processData(webhookData: any) {
   const { accountAddress, transactionType, data } = webhookData;
 
@@ -14,14 +19,16 @@ export default async function processData(webhookData: any) {
 
   for (const s of settings) {
     // Update users credits
-    const user = users.find((u: User) => u.id === s.databaseId);
+    let user = users.find((u: User) => u.id === s.databaseId);
 
     // Updated User
     const updatedUser = await updateUserCredits(user?.id, s.databaseId)
     if (!updatedUser) {
       return null;
     } else {
-      if (updatedUser.credits > 100) {
+      user = updatedUser;
+
+      if (user.credits > 100) {
         if (s.targetAddr === accountAddress && s.indexParams.includes(transactionType)) {
           const cachedDatabase = databases.find((db: Database) => db.id === s.databaseId);
           if (cachedDatabase) {
@@ -41,6 +48,43 @@ export default async function processData(webhookData: any) {
         }
       } else {
         // Update the webhook
+        const webhookParams = await prisma.params.findFirst();
+
+        const webhookBody = {
+          transactionTypes: webhookParams?.transactionTypes,
+          accountAddress: webhookParams?.accountAddresses.filter((address: string) => address !== s.targetAddr),
+        }
+
+        try {
+          const res = await fetch(`${HELIUS_MAINNET_API}/${WEBHOOK_ID}?api-key=${HELIUS_API_KEY}`, {
+            method: "PUT",
+            headers: {
+              "Authorization": `${WEBHOOK_SECRET}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(webhookBody),
+          });
+          if (!res.ok) {
+            throw new Error(`Webhook update failed with status: ${res.status}`);
+          }
+        } catch (error) {
+          console.error(`Error updating webhook for ${s.targetAddr}:`, error);
+        }
+
+        await prisma.$transaction([
+          prisma.user.update({
+            where: { id: updatedUser.id },
+            data: { credits: 0 },
+          }),
+          prisma.params.update({
+            where: { id: webhookParams?.id },
+            data: {
+              transactionTypes: webhookParams?.transactionTypes,
+              accountAddresses: webhookParams?.accountAddresses.filter((address: string) => address !== s.targetAddr),
+            },
+          }),
+        ]);
+
         await redis.del(`user:${s.databaseId}`);
         await redis.del(`settings:${s.databaseId}`);
         await redis.del(`database:${s.databaseId}`);
@@ -55,7 +99,7 @@ async function updateUserCredits(userId: string | undefined, databaseId: string)
 
   if (user) {
     user.credits -= 1;
-    await prisma.user.update({
+    prisma.user.update({
       where: { id: userId },
       data: { credits: user.credits },
     });

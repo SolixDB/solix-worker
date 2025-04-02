@@ -4,10 +4,13 @@ import { getCachedData } from "../lib/cacheData";
 import { Database, PrismaClient, User } from "@prisma/client";
 import { decrypt } from "../lib/encrypt";
 
-const HELIUS_MAINNET_API = "https://api.helius.xyz/v0/webhooks";
-const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
-const WEBHOOK_ID = process.env.WEBHOOK_ID;
+const HELIUS_API_URL = "https://api.helius.xyz/v0/webhooks";
+const HELIUS_MAINNET_API_KEY = process.env.HELIUS_MAINNET_API_KEY;
+const WEBHOOK_DEVNET_API_KEY = process.env.WEBHOOK_DEVNET_API_KEY;
+const WEBHOOK_DEVNET_SECRET = process.env.WEBHOOK_DEVNET_SECRET;
+const WEBHOOK_MAINNET_SECRET = process.env.WEBHOOK_MAINNET_SECRET;
+const MAINNET_WEBHOOK_ID = process.env.MAINNET_WEBHOOK_ID;
+const DEVNET_WEBHOOK_ID = process.env.DEVNET_WEBHOOK_ID;
 
 export default async function processData(webhookData: any) {
   const { accountAddress, transactionType, data } = webhookData;
@@ -55,8 +58,12 @@ export default async function processData(webhookData: any) {
           accountAddress: webhookParams?.accountAddresses.filter((address: string) => address !== s.targetAddr),
         }
 
+        const WEBHOOK_SECRET = s.cluster === "DEVNET" ? WEBHOOK_DEVNET_SECRET : WEBHOOK_MAINNET_SECRET;
+        const WEBHOOK_ID = s.cluster === "DEVNET" ? DEVNET_WEBHOOK_ID : MAINNET_WEBHOOK_ID;
+        const HELIUS_API_KEY = s.cluster === "DEVNET" ? WEBHOOK_DEVNET_API_KEY : HELIUS_MAINNET_API_KEY;
+
         try {
-          const res = await fetch(`${HELIUS_MAINNET_API}/${WEBHOOK_ID}?api-key=${HELIUS_API_KEY}`, {
+          const res = await fetch(`${HELIUS_API_URL}/${WEBHOOK_ID}?api-key=${HELIUS_API_KEY}`, {
             method: "PUT",
             headers: {
               "Authorization": `${WEBHOOK_SECRET}`,

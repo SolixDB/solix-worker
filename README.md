@@ -41,7 +41,6 @@ touch .env
 Add the following environment variables:
 ```
 REDIS_URL=your_upstash_redis_url
-REDIS_TOKEN=your_upstash_redis_token
 REDIS_QUEUE_NAME=webhookQueue
 ENCRYPTION_KEY=your_encryption_key
 ENCRYPTION_IV=your_encryption_iv

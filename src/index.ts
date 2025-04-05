@@ -1,25 +1,36 @@
-import { Redis } from '@upstash/redis';
-import Bull from 'bull';
+import { Worker } from 'bullmq';
 import "dotenv/config";
 import express from 'express';
+import { redis } from './db/redis';
 import processData from './lib/processData';
 
-const REDIS_URL = process.env.REDIS_URL;
-const REDIS_TOKEN = process.env.REDIS_TOKEN;
 const REDIS_QUEUE_NAME = process.env.REDIS_QUEUE_NAME || 'webhookQueue';
 
-export const redis = new Redis({
-  url: REDIS_URL,
-  token: REDIS_TOKEN,
+// Create a BullMQ Worker to listen to the queue
+const webhookWorker = new Worker(
+  REDIS_QUEUE_NAME,
+  async (job) => {
+    const { data } = job;
+
+    await processData(data)
+  },
+  { connection: redis }
+);
+
+webhookWorker.on("ready", () => {
+  console.log("BullMQ worker started");
+})
+
+webhookWorker.on("ioredis:close", () => {
+  console.log("IO Redis connection closed");
+})
+
+webhookWorker.on('completed', (job) => {
+  console.log(`Job ${job.id} has completed.`);
 });
 
-// Create a Bull queue to process jobs
-const webhookQueue = new Bull(REDIS_QUEUE_NAME, {
-  redis: {
-    host: REDIS_URL,
-    password: REDIS_TOKEN,
-    tls: {},
-  },
+webhookWorker.on('failed', (job, err) => {
+  console.error(`Job ${job?.id} failed with error:`, err);
 });
 
 // Health check endpoint for monitoring
@@ -29,44 +40,4 @@ app.get('/health', (req, res) => {
 });
 app.listen(5555, () => {
   console.log('Health check server running on port 5555');
-});
-
-// Define the job processing function
-webhookQueue.process(10, async (job) => { // Process up to 10 jobs concurrently
-  console.log('Processing job:', job.id, 'Data:', job.data);
-  try {
-    const result = await processData(job.data);
-    console.log(`✅ Job ${job.id} processed successfully.`);
-    return result;
-  } catch (error) {
-    console.error(`❌ Job ${job.id} failed:`, error);
-    throw error;
-  }
-});
-
-// Listen for completed jobs
-webhookQueue.on('completed', (job, result) => {
-  console.log(`Job completed with result: ${result}`);
-});
-
-// Listen for failed jobs
-webhookQueue.on('failed', (job, error) => {
-  console.error(`Job failed with error: ${error.message}`);
-});
-
-// Gracefully handle shutdown
-process.on('SIGINT', () => {
-  console.log('Worker shutting down...');
-  webhookQueue.close().then(() => {
-    console.log('Worker gracefully shut down.');
-    process.exit(0);
-  });
-});
-
-process.on('SIGTERM', () => {
-  console.log('Worker shutting down...');
-  webhookQueue.close().then(() => {
-    console.log('Worker gracefully shut down.');
-    process.exit(0);
-  });
 });

@@ -7,6 +7,7 @@ export interface CachedSettings {
   indexType: IndexType;
   indexParams: IndexParams[];
   cluster: Cluster;
+  userId: string;
 }
 
 export interface CachedUser {
@@ -45,7 +46,7 @@ export async function cacheData(
   // Check if settings are already cached
   const settingsExists = await redis.exists(settingsKey);
   if (!settingsExists) {
-    const settings: CachedSettings = { databaseId: database.id, targetAddr, indexType, indexParams, cluster };
+    const settings: CachedSettings = { databaseId: database.id, targetAddr, indexType, indexParams, cluster, userId: user.id };
     await redis.set(settingsKey, JSON.stringify(settings));
   }
 }

@@ -1,10 +1,10 @@
 import { Database, PrismaClient } from "@prisma/client";
 import prisma from "../db/prisma";
 import { redis } from "../db/redis";
+import { getCachedData } from "../lib/cacheData";
+import { TRANSFER } from "../types/params";
 import { getDatabaseClient } from "../utils/dbUtils";
 import { ensureTransferTableExists, insertTransferData } from "../utils/tableUtils";
-import { CachedUser, getCachedData } from "../lib/cacheData";
-import { TRANSFER } from "../types/params";
 
 const HELIUS_API_URL = "https://api.helius.xyz/v0/webhooks";
 const HELIUS_MAINNET_API_KEY = process.env.HELIUS_MAINNET_API_KEY;
@@ -30,9 +30,10 @@ export default async function processData(webhookData: any) {
 
     if (accounts.includes(s.targetAddr)) {
       try {
-        let user = users.find((u: CachedUser) => u.databases[0].id === s.databaseId);
+        let user = users.find((u: any) => u.id === s.userId);
 
         const updatedUser = await updateUserCredits(user?.id, s.databaseId)
+        
         if (!updatedUser) {
           return null;
         }
@@ -92,11 +93,6 @@ export default async function processData(webhookData: any) {
         }
       } catch (error) {
         console.error("Error processing transfer:", error);
-      }
-      finally {
-        if (db) {
-          await db.$disconnect();
-        }
       }
     }
   }

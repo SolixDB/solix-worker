@@ -54,7 +54,7 @@ export default async function processData(webhookData: any) {
         console.timeEnd(`getDatabaseClient:${s.databaseId}`);
 
         console.time(`handleTransaction:${s.databaseId}`);
-        await handleTransaction(db, TRANSFER, webhookData);
+        await handleTransaction(db, webhookData.type.toString().toUpperCase(), webhookData);
         console.timeEnd(`handleTransaction:${s.databaseId}`);
       } catch (err) {
         console.error(`Error processing settings for database ${s.databaseId}:`, err);

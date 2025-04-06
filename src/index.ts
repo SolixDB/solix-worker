@@ -12,7 +12,10 @@ const webhookWorker = new Worker(
     const { data } = job;
     await processData(data);
   },
-  { connection: redis }
+  {
+    connection: redis,
+    concurrency: 2,
+  }
 );
 
 webhookWorker.on("ready", () => {
@@ -29,6 +32,10 @@ webhookWorker.on('completed', (job) => {
 
 webhookWorker.on('failed', (job, err) => {
   console.error(`❌ Job ${job?.id} failed with error:`, err);
+});
+
+webhookWorker.on('progress', (job, progress) => {
+  console.log(`📊 Job ${job.id} progress:`, progress);
 });
 
 // Redis event listeners

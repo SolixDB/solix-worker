@@ -15,87 +15,91 @@ const MAINNET_WEBHOOK_ID = process.env.MAINNET_WEBHOOK_ID;
 const DEVNET_WEBHOOK_ID = process.env.DEVNET_WEBHOOK_ID;
 
 export default async function processData(webhookData: any) {
+  console.time("Total processData");
+
   const { accountData } = webhookData;
+  if (!accountData) return;
 
-  if (!accountData) {
-    console.error("Missing required fields for TRANSFER job");
-    return;
-  }
-
+  console.time("getCachedData");
   const { databases, settings, users } = await getCachedData();
-  const accounts = accountData.map((acc: any) => acc.account) || [];
+  console.timeEnd("getCachedData");
 
-  for (const s of settings) {
-    let db: PrismaClient | null = null;
+  const accounts = new Set(accountData.map((acc: any) => acc.account));
+  const dbMap = Object.fromEntries(databases.map((db: Database) => [db.id, db]));
+  const userMap = Object.fromEntries(users.map((u: any) => [u.id, u]));
 
-    if (accounts.includes(s.targetAddr)) {
+  console.time("settings loop");
+  await Promise.allSettled(
+    settings.map(async (s) => {
+      if (!accounts.has(s.targetAddr)) return;
+
       try {
-        let user = users.find((u: any) => u.id === s.userId);
+        const user = userMap[s.userId];
+        if (!user) return;
 
-        const updatedUser = await updateUserCredits(user?.id, s.databaseId)
-        
-        if (!updatedUser) {
-          return null;
+        console.time(`updateUserCredits:${s.userId}`);
+        const updatedUser = await updateUserCredits(user.id, s.databaseId);
+        console.timeEnd(`updateUserCredits:${s.userId}`);
+
+        if (!updatedUser || updatedUser.credits <= 100) {
+          await handleLowCreditUser(s, updatedUser);
+          return;
         }
-        user = updatedUser;
 
-        if (user.credits > 100) {
-          const databaseId = s.databaseId;
-          const database = databases.find((db: Database) => db.id === databaseId);
+        const dbConfig = dbMap[s.databaseId];
+        if (!dbConfig) return;
 
-          if (!database) {
-            console.error(`Database not found for ID: ${databaseId}`);
-            return;
-          }
+        console.time(`getDatabaseClient:${s.databaseId}`);
+        const db = await getDatabaseClient(dbConfig);
+        console.timeEnd(`getDatabaseClient:${s.databaseId}`);
 
-          db = await getDatabaseClient(database);
-
-          await handleTransaction(db, TRANSFER, webhookData);
-        } else {
-          const webhookParams = await prisma.params.findFirst();
-
-          const webhookBody = {
-            transactionTypes: webhookParams?.transactionTypes,
-            accountAddress: webhookParams?.accountAddresses.filter((address: string) => address !== s.targetAddr),
-          }
-
-          const WEBHOOK_SECRET = s.cluster === "DEVNET" ? WEBHOOK_DEVNET_SECRET : WEBHOOK_MAINNET_SECRET;
-          const WEBHOOK_ID = s.cluster === "DEVNET" ? DEVNET_WEBHOOK_ID : MAINNET_WEBHOOK_ID;
-          const HELIUS_API_KEY = s.cluster === "DEVNET" ? WEBHOOK_DEVNET_API_KEY : HELIUS_MAINNET_API_KEY;
-
-          const res = await fetch(`${HELIUS_API_URL}/${WEBHOOK_ID}?api-key=${HELIUS_API_KEY}`, {
-            method: "PUT",
-            headers: {
-              "Authorization": `${WEBHOOK_SECRET}`,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify(webhookBody),
-          });
-          if (!res.ok) {
-            throw new Error(`Webhook update failed with status: ${res.status}`);
-          }
-
-          await prisma.$transaction([
-            prisma.user.update({
-              where: { id: updatedUser.id },
-              data: { credits: 0 },
-            }),
-            prisma.params.update({
-              where: { id: webhookParams?.id },
-              data: {
-                transactionTypes: webhookParams?.transactionTypes,
-                accountAddresses: webhookParams?.accountAddresses.filter((address: string) => address !== s.targetAddr),
-              },
-            }),
-          ]);
-
-          clearRedisCache(s.databaseId);
-        }
-      } catch (error) {
-        console.error("Error processing transfer:", error);
+        console.time(`handleTransaction:${s.databaseId}`);
+        await handleTransaction(db, TRANSFER, webhookData);
+        console.timeEnd(`handleTransaction:${s.databaseId}`);
+      } catch (err) {
+        console.error(`Error processing settings for database ${s.databaseId}:`, err);
       }
-    }
-  }
+    })
+  );
+  console.timeEnd("settings loop");
+
+  console.timeEnd("Total processData");
+}
+
+async function handleLowCreditUser(s: any, user: any) {
+  const webhookParams = await prisma.params.findFirst();
+  const WEBHOOK_SECRET = s.cluster === "DEVNET" ? WEBHOOK_DEVNET_SECRET : WEBHOOK_MAINNET_SECRET;
+  const WEBHOOK_ID = s.cluster === "DEVNET" ? DEVNET_WEBHOOK_ID : MAINNET_WEBHOOK_ID;
+  const HELIUS_API_KEY = s.cluster === "DEVNET" ? WEBHOOK_DEVNET_API_KEY : HELIUS_MAINNET_API_KEY;
+
+  const webhookBody = {
+    transactionTypes: webhookParams?.transactionTypes,
+    accountAddress: webhookParams?.accountAddresses.filter((addr: string) => addr !== s.targetAddr),
+  };
+
+  const res = await fetch(`${HELIUS_API_URL}/${WEBHOOK_ID}?api-key=${HELIUS_API_KEY}`, {
+    method: "PUT",
+    headers: {
+      "Authorization": `${WEBHOOK_SECRET}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(webhookBody),
+  });
+
+  if (!res.ok) return;
+
+  await prisma.$transaction([
+    prisma.user.update({ where: { id: user.id }, data: { credits: 0 } }),
+    prisma.params.update({
+      where: { id: webhookParams?.id },
+      data: {
+        transactionTypes: webhookParams?.transactionTypes,
+        accountAddresses: webhookParams?.accountAddresses.filter((addr: string) => addr !== s.targetAddr),
+      },
+    }),
+  ]);
+
+  clearRedisCache(s.databaseId);
 }
 
 async function handleTransaction(db: PrismaClient, type: string, data: any) {

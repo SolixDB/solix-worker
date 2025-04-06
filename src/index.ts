@@ -1,72 +1,69 @@
-import { Redis } from '@upstash/redis';
-import Bull from 'bull';
+import { Worker } from 'bullmq';
 import "dotenv/config";
 import express from 'express';
+import { redis } from './db/redis';
 import processData from './lib/processData';
 
-const REDIS_URL = process.env.REDIS_URL;
-const REDIS_TOKEN = process.env.REDIS_TOKEN;
 const REDIS_QUEUE_NAME = process.env.REDIS_QUEUE_NAME || 'webhookQueue';
 
-export const redis = new Redis({
-  url: REDIS_URL,
-  token: REDIS_TOKEN,
-});
-
-// Create a Bull queue to process jobs
-const webhookQueue = new Bull(REDIS_QUEUE_NAME, {
-  redis: {
-    host: REDIS_URL,
-    password: REDIS_TOKEN,
-    tls: {},
+const webhookWorker = new Worker(
+  REDIS_QUEUE_NAME,
+  async (job) => {
+    const { data } = job;
+    await processData(data);
   },
+  {
+    connection: redis,
+    concurrency: 2,
+  }
+);
+
+webhookWorker.on("ready", () => {
+  console.log("✅ BullMQ worker started");
 });
 
-// Health check endpoint for monitoring
+webhookWorker.on("ioredis:close", () => {
+  console.warn("⚠️ IO Redis connection closed");
+});
+
+webhookWorker.on('completed', (job) => {
+  console.log(`✅ Job ${job.id} has completed.`);
+});
+
+webhookWorker.on('failed', (job, err) => {
+  console.error(`❌ Job ${job?.id} failed with error:`, err);
+});
+
+webhookWorker.on('progress', (job, progress) => {
+  console.log(`📊 Job ${job.id} progress:`, progress);
+});
+
+// Redis event listeners
+redis.on("connect", () => console.log("🔌 Redis connected"));
+redis.on("ready", () => console.log("🚀 Redis ready"));
+redis.on("error", (err) => console.error("🔥 Redis error:", err));
+redis.on("close", () => console.warn("🔒 Redis connection closed"));
+redis.on("reconnecting", () => console.info("♻️ Redis reconnecting..."));
+
+// Redis keep-alive ping every 1 minute
+setInterval(async () => {
+  try {
+    await redis.ping();
+    console.log(`[${new Date().toISOString()}] 🔄 Redis ping`);
+  } catch (err) {
+    console.error("❗ Redis ping failed:", err);
+  }
+}, 60_000);
+
+// Worker heartbeat
+setInterval(() => {
+  console.log(`[${new Date().toISOString()}] ❤️ Worker heartbeat`);
+}, 5 * 60_000);
+
 const app = express();
 app.get('/health', (req, res) => {
-  res.send('Worker is alive');
+  res.send('✅ Worker is alive');
 });
 app.listen(5555, () => {
-  console.log('Health check server running on port 5555');
-});
-
-// Define the job processing function
-webhookQueue.process(10, async (job) => { // Process up to 10 jobs concurrently
-  console.log('Processing job:', job.id, 'Data:', job.data);
-  try {
-    const result = await processData(job.data);
-    console.log(`✅ Job ${job.id} processed successfully.`);
-    return result;
-  } catch (error) {
-    console.error(`❌ Job ${job.id} failed:`, error);
-    throw error;
-  }
-});
-
-// Listen for completed jobs
-webhookQueue.on('completed', (job, result) => {
-  console.log(`Job completed with result: ${result}`);
-});
-
-// Listen for failed jobs
-webhookQueue.on('failed', (job, error) => {
-  console.error(`Job failed with error: ${error.message}`);
-});
-
-// Gracefully handle shutdown
-process.on('SIGINT', () => {
-  console.log('Worker shutting down...');
-  webhookQueue.close().then(() => {
-    console.log('Worker gracefully shut down.');
-    process.exit(0);
-  });
-});
-
-process.on('SIGTERM', () => {
-  console.log('Worker shutting down...');
-  webhookQueue.close().then(() => {
-    console.log('Worker gracefully shut down.');
-    process.exit(0);
-  });
+  console.log('Server Running');
 });

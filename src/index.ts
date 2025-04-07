@@ -114,8 +114,8 @@ setInterval(async () => {
   try {
     const fetch = (await import('node-fetch')).default;
     const res = await fetch(`${process.env.APP_URL}/health`);
-    const text = await res.text();
-    console.log(`[${new Date().toISOString()}] 🩺 Self-ping response: ${text}`);
+
+    console.log(`[${new Date().toISOString()}] 🩺 Self-ping response: ${res.statusText}`);
   } catch (err) {
     console.error(`[${new Date().toISOString()}] ❌ Self-ping failed:`, err);
   }

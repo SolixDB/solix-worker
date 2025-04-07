@@ -1,9 +1,9 @@
+import { Job, Worker } from 'bullmq';
 import "dotenv/config";
 import express from 'express';
-import { Worker, Job } from 'bullmq';
 import { redis } from './db/redis';
-import processData from './lib/processData';
 import feedData from './lib/feedData';
+import processData from './lib/processData';
 
 // ==================
 // 🔧 Queue Constants
@@ -81,7 +81,6 @@ redis.on("reconnecting", () => console.info("♻️ Redis reconnecting..."));
 // ============================
 // 🫀 Health Checks and Pingers
 // ============================
-
 setInterval(async () => {
   try {
     await redis.ping();
@@ -107,3 +106,17 @@ app.get('/health', (_, res) => {
 app.listen(5555, () => {
   console.log('📡 Worker Health Server Running');
 });
+
+// ====================
+// 🔁 Self Ping /health
+// ====================
+setInterval(async () => {
+  try {
+    const fetch = (await import('node-fetch')).default;
+    const res = await fetch(`${process.env.APP_URL}/health`);
+    const text = await res.text();
+    console.log(`[${new Date().toISOString()}] 🩺 Self-ping response: ${text}`);
+  } catch (err) {
+    console.error(`[${new Date().toISOString()}] ❌ Self-ping failed:`, err);
+  }
+}, 5 * 60_000);

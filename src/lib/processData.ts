@@ -3,7 +3,7 @@ import prisma from "../db/prisma";
 import { redis } from "../db/redis";
 import { getCachedData } from "../lib/cacheData";
 import { TRANSFER } from "../types/params";
-import { getDatabaseClient } from "../utils/dbUtils";
+import { getDatabaseClient, pingPrismaDatabase, withRetry } from "../utils/dbUtils";
 import { ensureTransferTableExists, insertTransferData } from "../utils/tableUtils";
 
 const HELIUS_API_URL = "https://api.helius.xyz/v0/webhooks";
@@ -49,10 +49,17 @@ export default async function processData(webhookData: any) {
         const dbConfig = dbMap[s.databaseId];
         if (!dbConfig) return;
 
+
         console.time(`getDatabaseClient:${s.databaseId}`);
         const db = await getDatabaseClient(dbConfig);
         console.timeEnd(`getDatabaseClient:${s.databaseId}`);
 
+        const dbReady = await withRetry(() => pingPrismaDatabase(db), 5, 3000);
+        if (!dbReady) {
+          console.error(`Database ${s.databaseId} not ready after retries.`);
+          return;
+        }
+        
         console.time(`handleTransaction:${s.databaseId}`);
         await handleTransaction(db, webhookData.type.toString().toUpperCase(), webhookData);
         console.timeEnd(`handleTransaction:${s.databaseId}`);

@@ -106,17 +106,3 @@ app.get('/health', (_, res) => {
 app.listen(5555, () => {
   console.log('📡 Worker Health Server Running');
 });
-
-// ====================
-// 🔁 Self Ping /health
-// ====================
-setInterval(async () => {
-  try {
-    const fetch = (await import('node-fetch')).default;
-    const res = await fetch(`${process.env.APP_URL}/health`);
-
-    console.log(`[${new Date().toISOString()}] 🩺 Self-ping response: ${res.statusText}`);
-  } catch (err) {
-    console.error(`[${new Date().toISOString()}] ❌ Self-ping failed:`, err);
-  }
-}, 5 * 60_000);

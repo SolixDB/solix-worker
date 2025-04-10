@@ -1,6 +1,5 @@
 import { Job, Worker } from 'bullmq';
 import "dotenv/config";
-import express from 'express';
 import { redis } from './db/redis';
 import feedData from './lib/feedData';
 import processData from './lib/processData';
@@ -18,7 +17,6 @@ const webhookWorker = new Worker(
   REDIS_QUEUE_NAME,
   async (job: Job) => {
     console.log(`📥 [WebhookWorker] Received Job ${job.id}`);
-    console.log(`🧾 Payload Keys:`, Object.keys(job.data));
     await processData(job.data);
   },
   {
@@ -31,7 +29,6 @@ const feedingWorker = new Worker(
   REDIS_FEEDING_QUEUE,
   async (job: Job) => {
     console.log(`📥 [FeedingWorker] Received Job ${job.id}`);
-    console.log(`🧾 Payload Keys:`, Object.keys(job.data));
     const { transactions, databaseId } = job.data;
     await feedData({ transactions, databaseId });
   },
@@ -93,16 +90,3 @@ setInterval(async () => {
 setInterval(() => {
   console.log(`[${new Date().toISOString()}] ❤️ Worker heartbeat`);
 }, 5 * 60_000);
-
-// =======================
-// 🖥️ Express Health Route
-// =======================
-const app = express();
-
-app.get('/health', (_, res) => {
-  res.send('✅ Worker is alive');
-});
-
-app.listen(5555, () => {
-  console.log('📡 Worker Health Server Running');
-});

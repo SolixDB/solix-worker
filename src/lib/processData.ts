@@ -1,7 +1,7 @@
 import { Database, PrismaClient } from "@prisma/client";
 import prisma from "../db/prisma";
 import { redis } from "../db/redis";
-import { getCachedData } from "../lib/cacheData";
+import { cacheData, CachedUser, getCachedData } from "../lib/cacheData";
 import { TRANSFER } from "../types/params";
 import { getDatabaseClient, pingPrismaDatabase, withRetry } from "../utils/dbUtils";
 import { ensureTransferTableExists, insertTransferData } from "../utils/tableUtils";
@@ -41,21 +41,45 @@ export default async function processData(webhookData: any) {
   if (!accountData) return;
 
   startTimer("getCachedData");
-  const { databases, settings, users } = await getCachedData();
+  let data = await getCachedData();
+  let { databases, users, settings = [] } = data;
+
   endTimer("getCachedData");
 
-  const accounts = new Set(accountData.map((acc: any) => acc.account));
+  const accounts: Set<string> = new Set(accountData.map((acc: any) => acc.account));
   const dbMap = Object.fromEntries(databases.map((db: Database) => [db.id, db]));
   const userMap = Object.fromEntries(users.map((u: any) => [u.id, u]));
 
   startTimer("settings loop");
+  if (!settings.length) {
+    await handleNoSettings(accounts);
+  }
+
+  data = await getCachedData();
+  settings = data.settings
+
+  if (!settings.length) return;
+
   await Promise.allSettled(
     settings.map(async (s) => {
       if (!accounts.has(s.targetAddr)) return;
 
       try {
-        const user = userMap[s.userId];
-        if (!user) return;
+        let user = userMap[s.userId];
+
+        if (!user) {
+          const userLabel = `getUser:${s.userId}`;
+          startTimer(userLabel);
+          user = await prisma.user.findUnique({
+            where: { id: s.userId },
+          });
+          endTimer(userLabel);
+
+          if (!user) {
+            console.warn(`User with ID ${s.userId} not found in DB.`);
+            return;
+          }
+        }
 
         const userLabel = `updateUserCredits:${s.userId}`;
         startTimer(userLabel);
@@ -90,9 +114,48 @@ export default async function processData(webhookData: any) {
       }
     })
   );
+
   endTimer("settings loop");
 
   endTimer("Total processData");
+}
+
+async function handleNoSettings(accounts: Set<string>) {
+  const indexSettings = await prisma.indexSettings.findMany({
+    where: {
+      targetAddr: {
+        in: Array.from(accounts)
+      },
+      status: "IN_PROGRESS"
+    },
+    include: {
+      database: true,
+      user: true
+    }
+  });
+
+  indexSettings.forEach((s) => {
+    const { user, database } = s;
+
+    const cachedUser: CachedUser = {
+      id: user.id,
+      email: user.email,
+      credits: user.credits,
+      plan: user.plan,
+      createdAt: user.createdAt,
+      databases: [database]
+    }
+
+    cacheData(
+      cachedUser,
+      database,
+      s.targetAddr,
+      s.indexType,
+      s.indexParams,
+      s.cluster
+    )
+  })
+
 }
 
 async function handleLowCreditUser(s: any, user: any) {
@@ -167,7 +230,7 @@ async function updateUserCredits(userId: string | undefined, databaseId: string)
 
   if (user.credits <= 0) {
     console.warn(`User ${userId} has insufficient credits: ${user.credits}`);
-    return user;
+    return null;
   }
 
   const updatedUser = await prisma.user.update({
@@ -181,6 +244,7 @@ async function updateUserCredits(userId: string | undefined, databaseId: string)
   } else {
     await redis.set(`user:${databaseId}`, JSON.stringify(updatedUser));
   }
+
   return updatedUser;
 }
 

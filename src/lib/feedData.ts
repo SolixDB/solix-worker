@@ -1,6 +1,6 @@
 import prisma from "../db/prisma";
 import { TRANSFER } from "../types/params";
-import { getDatabaseClient } from "../utils/dbUtils";
+import { getDatabaseClient, pingPrismaDatabase, withRetry } from "../utils/dbUtils";
 import { ensureTransferTableExists, insertTransferData } from "../utils/tableUtils";
 
 interface FeedData {
@@ -23,6 +23,11 @@ export default async function feedData(webhookData: FeedData) {
   }
 
   const db = await getDatabaseClient(database);
+  const dbReady = await withRetry(() => pingPrismaDatabase(db), 5, 3000);
+  if (!dbReady) {
+    console.error(`Database ${databaseId} not ready after retries.`);
+    return;
+  }
 
   let transferTableChecked = false;
   for (const txn of transactions) {

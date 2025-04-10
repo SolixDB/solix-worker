@@ -10,6 +10,7 @@ datasource db {
 enum Provider {
   GOOGLE
   GITHUB
+  DISCORD
 }
 
 enum IndexType {

@@ -1,9 +1,9 @@
+import { Job, Worker } from 'bullmq';
 import "dotenv/config";
 import express from 'express';
-import { Worker, Job } from 'bullmq';
 import { redis } from './db/redis';
-import processData from './lib/processData';
 import feedData from './lib/feedData';
+import processData from './lib/processData';
 
 // ==================
 // 🔧 Queue Constants
@@ -81,7 +81,6 @@ redis.on("reconnecting", () => console.info("♻️ Redis reconnecting..."));
 // ============================
 // 🫀 Health Checks and Pingers
 // ============================
-
 setInterval(async () => {
   try {
     await redis.ping();

@@ -3,7 +3,7 @@ import prisma from "../db/prisma";
 import { redis } from "../db/redis";
 import { getCachedData } from "../lib/cacheData";
 import { TRANSFER } from "../types/params";
-import { getDatabaseClient } from "../utils/dbUtils";
+import { getDatabaseClient, pingPrismaDatabase, withRetry } from "../utils/dbUtils";
 import { ensureTransferTableExists, insertTransferData } from "../utils/tableUtils";
 
 const HELIUS_API_URL = "https://api.helius.xyz/v0/webhooks";
@@ -14,21 +14,41 @@ const WEBHOOK_MAINNET_SECRET = process.env.WEBHOOK_MAINNET_SECRET;
 const MAINNET_WEBHOOK_ID = process.env.MAINNET_WEBHOOK_ID;
 const DEVNET_WEBHOOK_ID = process.env.DEVNET_WEBHOOK_ID;
 
+const activeTimers = new Set<string>();
+
+export function startTimer(label: string) {
+  if (activeTimers.has(label)) {
+    console.warn(`[Timer] '${label}' is already running.`);
+    return;
+  }
+  activeTimers.add(label);
+  console.time(label);
+}
+
+export function endTimer(label: string) {
+  if (!activeTimers.has(label)) {
+    console.warn(`[Timer] Tried to end unknown label '${label}'`);
+    return;
+  }
+  console.timeEnd(label);
+  activeTimers.delete(label);
+}
+
 export default async function processData(webhookData: any) {
-  console.time("Total processData");
+  startTimer("Total processData");
 
   const { accountData } = webhookData;
   if (!accountData) return;
 
-  console.time("getCachedData");
+  startTimer("getCachedData");
   const { databases, settings, users } = await getCachedData();
-  console.timeEnd("getCachedData");
+  endTimer("getCachedData");
 
   const accounts = new Set(accountData.map((acc: any) => acc.account));
   const dbMap = Object.fromEntries(databases.map((db: Database) => [db.id, db]));
   const userMap = Object.fromEntries(users.map((u: any) => [u.id, u]));
 
-  console.time("settings loop");
+  startTimer("settings loop");
   await Promise.allSettled(
     settings.map(async (s) => {
       if (!accounts.has(s.targetAddr)) return;
@@ -37,9 +57,10 @@ export default async function processData(webhookData: any) {
         const user = userMap[s.userId];
         if (!user) return;
 
-        console.time(`updateUserCredits:${s.userId}`);
+        const userLabel = `updateUserCredits:${s.userId}`;
+        startTimer(userLabel);
         const updatedUser = await updateUserCredits(user.id, s.databaseId);
-        console.timeEnd(`updateUserCredits:${s.userId}`);
+        endTimer(userLabel);
 
         if (!updatedUser || updatedUser.credits <= 100) {
           await handleLowCreditUser(s, updatedUser);
@@ -49,21 +70,29 @@ export default async function processData(webhookData: any) {
         const dbConfig = dbMap[s.databaseId];
         if (!dbConfig) return;
 
-        console.time(`getDatabaseClient:${s.databaseId}`);
+        const dbClientLabel = `getDatabaseClient:${s.databaseId}`;
+        startTimer(dbClientLabel);
         const db = await getDatabaseClient(dbConfig);
-        console.timeEnd(`getDatabaseClient:${s.databaseId}`);
+        endTimer(dbClientLabel);
 
-        console.time(`handleTransaction:${s.databaseId}`);
+        const dbReady = await withRetry(() => pingPrismaDatabase(db), 5, 3000);
+        if (!dbReady) {
+          console.error(`Database ${s.databaseId} not ready after retries.`);
+          return;
+        }
+
+        const txnLabel = `handleTransaction:${s.databaseId}:${webhookData.id ?? webhookData.signature}`;
+        startTimer(txnLabel);
         await handleTransaction(db, webhookData.type.toString().toUpperCase(), webhookData);
-        console.timeEnd(`handleTransaction:${s.databaseId}`);
+        endTimer(txnLabel);
       } catch (err) {
         console.error(`Error processing settings for database ${s.databaseId}:`, err);
       }
     })
   );
-  console.timeEnd("settings loop");
+  endTimer("settings loop");
 
-  console.timeEnd("Total processData");
+  endTimer("Total processData");
 }
 
 async function handleLowCreditUser(s: any, user: any) {
@@ -125,25 +154,34 @@ async function handleTransaction(db: PrismaClient, type: string, data: any) {
 async function updateUserCredits(userId: string | undefined, databaseId: string) {
   if (!userId) return null;
 
-  let user = await prisma.user.findUnique({
+  const user = await prisma.user.findUnique({
     where: { id: userId },
     include: { databases: true },
   });
 
-  if (user) {
-    const updatedUser = await prisma.user.update({
-      where: { id: userId },
-      data: { credits: user.credits - 1 },
-      include: { databases: true },
-    });
-
-    await redis.set(`user:${databaseId}`, JSON.stringify(updatedUser));
-    return updatedUser;
-  } else {
+  if (!user) {
     clearRedisCache(databaseId);
     console.error(`User not found for ID: ${userId}`);
     return null;
   }
+
+  if (user.credits <= 0) {
+    console.warn(`User ${userId} has insufficient credits: ${user.credits}`);
+    return user;
+  }
+
+  const updatedUser = await prisma.user.update({
+    where: { id: userId },
+    data: { credits: user.credits - 1 },
+    include: { databases: true },
+  });
+
+  if (updatedUser.credits <= 0) {
+    clearRedisCache(databaseId);
+  } else {
+    await redis.set(`user:${databaseId}`, JSON.stringify(updatedUser));
+  }
+  return updatedUser;
 }
 
 function clearRedisCache(databaseId: string) {

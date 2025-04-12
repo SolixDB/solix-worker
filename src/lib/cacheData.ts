@@ -1,5 +1,6 @@
 import { Cluster, Database, IndexParams, IndexType, Plan } from "@prisma/client";
 import { redis } from "../db/redis";
+import { globalCache } from "../cache/globalCache"
 
 export interface CachedSettings {
   databaseId: string;
@@ -25,11 +26,11 @@ export async function cacheData(
   targetAddr: string,
   indexType: IndexType,
   indexParams: IndexParams[],
-  cluster: Cluster
+  cluster: Cluster,
 ) {
   const userKey = `user:${database.id}`;
   const dbKey = `database:${database.id}`;
-  const settingsKey = `settings:${database.id}`;
+  const settingsKey = `settings:${targetAddr}`;
 
   // Check if user is already cached
   const userExists = await redis.exists(userKey);
@@ -51,22 +52,74 @@ export async function cacheData(
   }
 }
 
-export async function getCachedData() {
-  const databaseKeys = await redis.keys("database:*");
-  const settingsKeys = await redis.keys("settings:*");
-  const userKeys = await redis.keys("user:*");
+export async function getData(targetAddr: string) {
+  // Check In-memory cache
+  let settings: CachedSettings | undefined;
+  for (const s of globalCache.settings) {
+    if (s.targetAddr === targetAddr) {
+      settings = s;
+      globalCache.reducedRedisCalls++;
+      break;
+    }
+  }
 
-  // Single batch request
-  const [dbValues, settingsValues, userValues] = await Promise.all([
-    databaseKeys.length ? redis.mget(databaseKeys) : [],
-    settingsKeys.length ? redis.mget(settingsKeys) : [],
-    userKeys.length ? redis.mget(userKeys) : [],
-  ]);
+  // If not in-memory, fetch all settings from Redis ONCE
+  if (!settings) {
+    const keys = await redis.keys("settings:*");
 
-  // Parse only non-null values
-  const databases: Database[] = dbValues.filter(Boolean).map((db) => JSON.parse(db as string));
-  const settings: CachedSettings[] = settingsValues.filter(Boolean).map((s) => JSON.parse(s as string));
-  const users: CachedUser[] = userValues.filter(Boolean).map((u) => JSON.parse(u as string));
+    if (keys.length > 0) {
+      const allSettings = await redis.mget(...keys);
+      for (const val of allSettings) {
+        if (!val) continue;
+        const parsed: CachedSettings = JSON.parse(val);
+        globalCache.settings.add(parsed);
+        if (parsed.targetAddr === targetAddr) {
+          settings = parsed;
+        }
+      }
+    }
+  }
 
-  return { databases, settings, users };
+  if (!settings) throw new Error(`Settings not found for targetAddr: ${targetAddr}`);
+
+  // Try In-memory user
+  let user: CachedUser | undefined;
+  for (const u of globalCache.users) {
+    if (u.id === settings.userId) {
+      user = u;
+      globalCache.reducedRedisCalls++;
+      break;
+    }
+  }
+
+  // Try In-memory database
+  let database: Database | undefined;
+  for (const db of globalCache.databases) {
+    if (db.id === settings.databaseId) {
+      database = db;
+      globalCache.reducedRedisCalls++;
+      break;
+    }
+  }
+
+  // Fetch from Redis only if not in memory
+  if (!user) {
+    const userVal = await redis.get(`user:${settings.databaseId}`);
+    if (userVal) {
+      user = JSON.parse(userVal);
+      if (user) globalCache.users.add(user);
+    }
+  }
+
+  if (!database) {
+    const dbVal = await redis.get(`database:${settings.databaseId}`);
+    if (dbVal) {
+      database = JSON.parse(dbVal);
+      if (database) globalCache.databases.add(database);
+    }
+  }
+
+  if (!user || !database) throw new Error("User or Database not found");
+
+  return { user, database, settings };
 }

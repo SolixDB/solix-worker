@@ -1,18 +1,13 @@
-import Redis, { RedisOptions } from "ioredis";
+import Redis from "ioredis";
 
-const REDIS_URL = process.env.REDIS_URL;
+const { REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, REDIS_DB } = process.env;
 
-const redisOptions: RedisOptions = {
+const redis = new Redis({
+  host: REDIS_HOST,
+  port: parseInt(REDIS_PORT || '6379'),
+  password: REDIS_PASSWORD,
+  db: parseInt(REDIS_DB || '0'),
   maxRetriesPerRequest: null,
-};
-
-let redis: Redis;
-
-if (REDIS_URL) {
-  redis = new Redis(REDIS_URL, redisOptions);
-} else {
-  console.error("REDIS_URL environment variable is not set.");
-  process.exit(1);
-}
+});
 
 export { redis };

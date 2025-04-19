@@ -25,7 +25,7 @@ const webhookWorker = new Worker(
   },
   {
     connection: redis,
-    concurrency: 2,
+    concurrency: 5,
   }
 );
 
@@ -38,7 +38,7 @@ const feedingWorker = new Worker(
   },
   {
     connection: redis,
-    concurrency: 2,
+    concurrency: 5,
   }
 );
 
@@ -95,9 +95,10 @@ setInterval(() => {
   console.log(`[${new Date().toISOString()}] ❤️ Worker heartbeat`);
 }, 5 * 60_000);
 
-
 async function loadInMemoryData() {
   try {
+    // await redis.flushall();
+
     const indexSettings = await prisma.indexSettings.findMany({
       where: {
         status: Status.IN_PROGRESS,
@@ -107,6 +108,8 @@ async function loadInMemoryData() {
         user: true,
       },
     });
+
+    // const batchItems: BatchInput = [];
 
     for (const s of indexSettings) {
       const { user, database } = s;
@@ -120,6 +123,15 @@ async function loadInMemoryData() {
         createdAt: user.createdAt,
         databases: [database],
       };
+
+      // batchItems.push({
+      //   user: cachedUser,
+      //   database,
+      //   targetAddr: s.targetAddr,
+      //   indexType: s.indexType,
+      //   indexParams: s.indexParams,
+      //   cluster: s.cluster,
+      // });    
 
       // Avoid duplicate entries in memory
       const settingsKeyExists = [...globalCache.settings].some(setting => setting.targetAddr === s.targetAddr);
@@ -140,9 +152,10 @@ async function loadInMemoryData() {
 
       if (!userExists) globalCache.users.add(cachedUser);
       if (!dbExists) globalCache.databases.add(database);
-
-      return true
     }
+
+    // await batchCacheData(batchItems);
+    return true
   } catch (error) {
     console.error("Error loading in-memory data:", error);
   }

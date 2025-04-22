@@ -1,14 +1,43 @@
+import { Database, IndexSettings, Prisma, PrismaClient } from "@prisma/client";
+import { globalCache } from "../cache/globalCache";
 import { decrypt } from "../lib/encrypt";
-import { Database, Prisma, PrismaClient } from "@prisma/client";
+import prisma from "../db/prisma";
+
+export function generateConnectionString(db: Database) {
+  return `postgresql://${db.username}:${decrypt(db.password)}@${db.host}:${db.port}/${db.name}?sslmode=require`;
+}
+
+export async function getPrismaClient(db: Database, initialized: boolean = false, indexSettings?: IndexSettings): Promise<PrismaClient> {
+  const connStr = generateConnectionString(db);
+
+  if (!globalCache.prismaClients) {
+    globalCache.prismaClients = new Map<string, PrismaClient>();
+  }
+
+  if (!globalCache.prismaClients.has(connStr)) {
+    globalCache.prismaClients.set(connStr, new PrismaClient({
+      datasources: {
+        db: {
+          url: connStr,
+        },
+      },
+    }));
+  }
+
+  if (!initialized && indexSettings) {
+    await createDatabaseIfNotExists(db);
+
+    await prisma.indexSettings.update({
+      where: { id: indexSettings.id },
+      data: { tableInitialized: true },
+    });
+  }
+
+  return globalCache.prismaClients.get(connStr)!;
+}
 
 export async function createDatabaseIfNotExists(dbConfig: Database) {
-  const rootClient = new PrismaClient({
-    datasources: {
-      db: {
-        url: `postgresql://${dbConfig.username}:${decrypt(dbConfig.password)}@${dbConfig.host}:${dbConfig.port}/postgres?sslmode=require`,
-      },
-    },
-  });
+  const rootClient = await getPrismaClient(dbConfig);
 
   try {
     await rootClient.$connect();

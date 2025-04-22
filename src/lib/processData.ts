@@ -3,7 +3,7 @@ import prisma from "../db/prisma";
 import { redis } from "../db/redis";
 import { getData } from "../lib/cacheData";
 import { TRANSFER } from "../types/params";
-import { getDatabaseClient, pingPrismaDatabase, withRetry } from "../utils/dbUtils";
+import { getPrismaClient, pingPrismaDatabase, withRetry } from "../utils/dbUtils";
 import { ensureTransferTableExists, insertTransferData } from "../utils/tableUtils";
 import { globalCache } from "../cache/globalCache";
 
@@ -59,7 +59,7 @@ export default async function processData(webhookData: any) {
 
         const dbClientLabel = `getDatabaseClient:${database.id}`;
         startTimer(dbClientLabel);
-        const dbClient = await getDatabaseClient(database);
+        const dbClient = await getPrismaClient(database);
         endTimer(dbClientLabel);
 
         const dbReady = await withRetry(() => pingPrismaDatabase(dbClient), 5, 3000);

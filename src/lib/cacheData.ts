@@ -1,15 +1,6 @@
 import { Cluster, Database, IndexParams, IndexType, Plan } from "@prisma/client";
+import { globalCache } from "../cache/globalCache";
 import { redis } from "../db/redis";
-import { globalCache } from "../cache/globalCache"
-
-export type BatchInput = {
-  user: CachedUser;
-  database: Database;
-  targetAddr: string;
-  indexType: IndexType;
-  indexParams: IndexParams[];
-  cluster: Cluster;
-}[];
 
 export interface CachedSettings {
   databaseId: string;
@@ -59,64 +50,6 @@ export async function cacheData(
     const settings: CachedSettings = { databaseId: database.id, targetAddr, indexType, indexParams, cluster, userId: user.id };
     await redis.set(settingsKey, JSON.stringify(settings));
   }
-}
-
-export async function batchCacheData(batchItems: BatchInput) {
-  const pipeline = redis.pipeline();
-
-  const keysToCheck = new Set<string>();
-  const setOperations: [string, string][] = [];
-
-  for (const item of batchItems) {
-    const userKey = `user:${item.database.id}`;
-    const dbKey = `database:${item.database.id}`;
-    const settingsKey = `settings:${item.targetAddr}`;
-
-    keysToCheck.add(userKey);
-    keysToCheck.add(dbKey);
-    keysToCheck.add(settingsKey);
-
-    setOperations.push([
-      userKey,
-      JSON.stringify(item.user),
-    ]);
-
-    setOperations.push([
-      dbKey,
-      JSON.stringify(item.database),
-    ]);
-
-    const settings: CachedSettings = {
-      databaseId: item.database.id,
-      targetAddr: item.targetAddr,
-      indexType: item.indexType,
-      indexParams: item.indexParams,
-      cluster: item.cluster,
-      userId: item.user.id,
-    };
-
-    setOperations.push([
-      settingsKey,
-      JSON.stringify(settings),
-    ]);
-  }
-
-  // Step 1: Batch check for existence
-  const keyList = Array.from(keysToCheck);
-  keyList.forEach((key) => pipeline.exists(key));
-  const execResult = await pipeline.exec();
-  if (!execResult) throw new Error("Pipeline execution returned null");
-  const existsResults = execResult.map(([err, result]) => result);
-
-  // Step 2: Conditionally set missing keys
-  keyList.forEach((key, idx) => {
-    if (existsResults[idx] === 0) {
-      const toSet = setOperations.find(([k]) => k === key);
-      if (toSet) pipeline.set(toSet[0], toSet[1]);
-    }
-  });
-
-  await pipeline.exec();
 }
 
 export async function getData(targetAddr: string) {

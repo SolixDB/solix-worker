@@ -4,9 +4,9 @@ import "dotenv/config";
 import { globalCache } from './cache/globalCache';
 import prisma from './db/prisma';
 import { redis } from './db/redis';
-import { CachedSettings, CachedUser } from './lib/cacheData';
 import feedData from './lib/feedData';
 import processData from './lib/processData';
+import { generateConnectionString, getPrismaClient } from './utils/dbUtils';
 
 // ==================
 // 🔧 Queue Constants
@@ -97,67 +97,75 @@ setInterval(() => {
 
 async function loadInMemoryData() {
   try {
-    // await redis.flushall();
-
     const indexSettings = await prisma.indexSettings.findMany({
-      where: {
-        status: Status.IN_PROGRESS,
-      },
+      where: { status: Status.IN_PROGRESS },
       include: {
         database: true,
         user: true,
       },
     });
 
-    // const batchItems: BatchInput = [];
+    // Clear cache if needed before repopulating
+    globalCache.settings.clear();
+    globalCache.users.clear();
+    globalCache.databases.clear();
+    globalCache.prismaClients.clear();
 
     for (const s of indexSettings) {
       const { user, database } = s;
 
-      // Prepare user for caching
-      const cachedUser: CachedUser = {
-        id: user.id,
-        email: user.email,
-        credits: user.credits,
-        plan: user.plan,
-        createdAt: user.createdAt,
-        databases: [database],
-      };
+      const dbKey = generateConnectionString(database);
 
-      // batchItems.push({
-      //   user: cachedUser,
-      //   database,
-      //   targetAddr: s.targetAddr,
-      //   indexType: s.indexType,
-      //   indexParams: s.indexParams,
-      //   cluster: s.cluster,
-      // });    
+      // Add PrismaClient instance per database
+      if (!globalCache.prismaClients.has(dbKey)) {
+        const client = await getPrismaClient(database, s.tableInitialized);
+        globalCache.prismaClients.set(dbKey, client);
+      }
 
-      // Avoid duplicate entries in memory
-      const settingsKeyExists = [...globalCache.settings].some(setting => setting.targetAddr === s.targetAddr);
-      const userExists = [...globalCache.users].some(u => u.id === user.id);
-      const dbExists = [...globalCache.databases].some(d => d.id === database.id);
+      // Cache user (avoid duplicates)
+      if (![...globalCache.users].some(u => u.id === user.id)) {
+        globalCache.users.add({
+          id: user.id,
+          email: user.email,
+          credits: user.credits,
+          plan: user.plan,
+          createdAt: user.createdAt,
+          databases: [database],
+        });
+      }
 
-      if (!settingsKeyExists) {
-        const cachedSettings: CachedSettings = {
+      // Cache database
+      if (![...globalCache.databases].some(d => d.id === database.id)) {
+        globalCache.databases.add(database);
+      }
+
+      // Cache settings
+      if (![...globalCache.settings].some(sx => sx.targetAddr === s.targetAddr)) {
+        globalCache.settings.add({
           databaseId: database.id,
           targetAddr: s.targetAddr,
           indexType: s.indexType,
           indexParams: s.indexParams,
           cluster: s.cluster,
           userId: user.id,
-        };
-        globalCache.settings.add(cachedSettings);
+        });
       }
 
-      if (!userExists) globalCache.users.add(cachedUser);
-      if (!dbExists) globalCache.databases.add(database);
+      const cachedUser = {
+        id: user.id,
+        email: user.email,
+        credits: user.credits,
+        plan: user.plan,
+        createdAt: user.createdAt,
+        databases: [database],
+      }
     }
 
-    // await batchCacheData(batchItems);
-    return true
+    console.log("✅ In-memory data loaded.");
+    return true;
   } catch (error) {
-    console.error("Error loading in-memory data:", error);
+    console.error("❌ Error loading in-memory data:", error);
+    return false;
   }
 }
 

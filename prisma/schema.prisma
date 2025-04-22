@@ -94,19 +94,20 @@ model Database {
 }
 
 model IndexSettings {
-  id            String        @id @default(uuid())
-  targetAddr    String
-  indexType     IndexType
-  indexParams   IndexParams[]
-  status        Status
-  webhookSecret String        @default("")
-  updatedAt     DateTime      @default(now()) @updatedAt
-  createdAt     DateTime      @default(now())
-  userId        String
-  user          User          @relation(fields: [userId], references: [id])
-  databaseId    String
-  database      Database      @relation(fields: [databaseId], references: [id])
-  cluster       Cluster
+  id               String        @id @default(uuid())
+  targetAddr       String
+  indexType        IndexType
+  indexParams      IndexParams[]
+  status           Status
+  webhookSecret    String        @default("")
+  tableInitialized Boolean       @default(false)
+  updatedAt        DateTime      @default(now()) @updatedAt
+  createdAt        DateTime      @default(now())
+  userId           String
+  user             User          @relation(fields: [userId], references: [id])
+  databaseId       String
+  database         Database      @relation(fields: [databaseId], references: [id])
+  cluster          Cluster
 
   @@index([targetAddr])
 }
